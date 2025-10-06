@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <title>Survival Spiel</title>
+  <style>
+    canvas {
+      background: #111;
+      display: block;
+      margin: auto;
+    }
+    body {
+      margin: 0;
+      overflow: hidden;
+      user-select: none;
+    }
+    #pauseMenu, #gameOverMenu {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      background: rgba(0,0,0,0.8);
+      color: white;
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      font-family: Arial;
+    }
+    button {
+      margin: 10px;
+      padding: 10px 20px;
+      font-size: 18px;
+      border: none;
+      border-radius: 10px;
+      background-color: #00bcd4;
+      color: white;
+      cursor: pointer;
+      transition: 0.3s;
+    }
+    button:hover { background-color: #008ba3; }
+  </style>
+</head>
+<body>
+<canvas id="gameCanvas" width="800" height="600"></canvas>
+
+<div id="pauseMenu">
+  <h1>Pause</h1>
+  <p>Steuerung:</p>
+  <p>WASD – Bewegung<br>
+     Linke Maustaste – Schießen<br>
+     Rechte Maustaste – Wand platzieren<br>
+     ESC – Pause-Menü öffnen/schließen</p>
+  <button id="resumeBtn">Fortsetzen</button>
+</div>
+
+<div id="gameOverMenu">
+  <h1>GAME OVER</h1>
+  <p id="scoreText"></p>
+  <p id="reviveText"></p>
+  <button id="reviveBtn">Revive für 100 Münzen</button>
+  <button id="restartBtn">Neustart</button>
+</div>
+
+<script>
+const canvas = document.getElementById("gameCanvas");
+const ctx = canvas.getContext("2d");
+
+const pauseMenu = document.getElementById("pauseMenu");
+const gameOverMenu = document.getElementById("gameOverMenu");
+const resumeBtn = document.getElementById("resumeBtn");
+const restartBtn = document.getElementById("restartBtn");
+const reviveBtn = document.getElementById("reviveBtn");
+const scoreText = document.getElementById("scoreText");
+const reviveText = document.getElementById("reviveText");
+
+const player = { x: 400, y: 300, size: 20, speed: 3, dx: 0, dy: 0, lastDir: "right", alive: true };
+
+let bullets = [], enemies = [], walls = [];
+let maxWalls = 10, wave = 1, enemySpeed = 1, spawnCooldown = 0, paused = false;
+
+let score = Number(localStorage.getItem("score")) || 0;
+let coins = Number(localStorage.getItem("coins")) || 0;
+let highScore = Number(localStorage.getItem("highScore")) || 0;
+let highWave = Number(localStorage.getItem("highWave")) || 0;
+
+// ✅ Fortschritt speichern
+function saveProgress() {
+  localStorage.setItem("score", score);
+  localStorage.setItem("coins", coins);
+  localStorage.setItem("highScore", highScore);
+  localStorage.setItem("highWave", highWave);
+}
+
+function resetGame() {
+  player.x = 400; player.y = 300; player.alive = true;
+  bullets = []; enemies = []; walls = [];
+  score = 0; wave = 1; enemySpeed = 1;
+  spawnWave();
+  saveProgress();
+}
+
+function drawPlayer() {
+  ctx.fillStyle = "cyan";
+  ctx.fillRect(player.x, player.y, player.size, player.size);
+}
+
+function drawBullets() {
+  ctx.fillStyle = "white";
+  bullets.forEach(b => ctx.fillRect(b.x, b.y, b.size, b.size));
+}
+
+function drawEnemies() {
+  ctx.fillStyle = "red";
+  enemies.forEach(e => ctx.fillRect(e.x, e.y, e.size, e.size));
+}
+
+function drawWalls() {
+  ctx.fillStyle = "gray";
+  walls.forEach(w => ctx.fillRect(w.x, w.y, w.size, w.size));
+}
+
+function movePlayer() {
+  player.x += player.dx; player.y += player.dy;
+  // Pacman-Wrap
+  if (player.x + player.size < 0) player.x = canvas.width;
+  if (player.x > canvas.width) player.x = -player.size;
+  if (player.y + player.size < 0) player.y = canvas.height;
+  if (player.y > canvas.height) player.y = -player.size;
+}
+
+function moveEnemies() {
+  enemies.forEach(e => {
+    const dx = player.x - e.x, dy = player.y - e.y;
+    const dist = Math.hypot(dx, dy);
+    const moveX = (dx / dist) * e.speed;
+    const moveY = (dy / dist) * e.speed;
+    if (!checkWallCollision(e.x + moveX, e.y, e.size, e.size)) e.x += moveX;
+    if (!checkWallCollision(e.x, e.y + moveY, e.size, e.size)) e.y += moveY;
+    if (isColliding(e, player)) player.alive = false;
+  });
+}
+
+function moveBullets() {
+  bullets.forEach((b, i) => {
+    b.x += b.dx; b.y += b.dy;
+    if (b.x < 0 || b.x > canvas.width || b.y < 0 || b.y > canvas.height) {
+      bullets.splice(i, 1); return;
+    }
+    if (checkWallCollision(b.x, b.y, b.size, b.size)) {
+      bullets.splice(i, 1); return;
+    }
+    enemies.forEach((e, j) => {
+      if (isColliding(b, e)) {
+        bullets.splice(i, 1); enemies.splice(j, 1);
+        score++; coins++; saveProgress();
+      }
+    });
+  });
+}
+
+function checkWallCollision(x, y, w, h) {
+  return walls.some(wall =>
+    x < wall.x + wall.size && x + w > wall.x &&
+    y < wall.y + wall.size && y + h > wall.y
+  );
+}
+function isColliding(a, b) {
+  return a.x < b.x + b.size && a.x + a.size > b.x && a.y < b.y + b.size && a.y + a.size > b.y;
+}
+
+function shoot() {
+  const size = 6, speed = 6;
+  let dx = 0, dy = 0;
+  if (player.dx || player.dy) {
+    const mag = Math.hypot(player.dx, player.dy);
+    dx = (player.dx / mag) * speed;
+    dy = (player.dy / mag) * speed;
+  } else {
+    switch (player.lastDir) {
+      case "up": dy = -speed; break;
+      case "down": dy = speed; break;
+      case "left": dx = -speed; break;
+      case "right": dx = speed; break;
+    }
+  }
+  bullets.push({
+    x: player.x + player.size / 2 - size / 2,
+    y: player.y + player.size / 2 - size / 2,
+    dx, dy, size
+  });
+}
+
+function buildWall() {
+  if (walls.length >= maxWalls) return;
+  const offset = 25;
+  let wx = player.x, wy = player.y;
+  switch (player.lastDir) {
+    case "up": wy -= offset; break;
+    case "down": wy += offset; break;
+    case "left": wx -= offset; break;
+    case "right": wx += offset; break;
+  }
+  walls.push({ x: wx, y: wy, size: 20 });
+}
+
+function spawnWave() {
+  const count = wave + 2;
+  enemies = [];
+  for (let i = 0; i < count; i++) {
+    const side = Math.floor(Math.random() * 4);
+    let x, y;
+    switch (side) {
+      case 0: x = 0; y = Math.random() * canvas.height; break;
+      case 1: x = canvas.width; y = Math.random() * canvas.height; break;
+      case 2: x = Math.random() * canvas.width; y = 0; break;
+      case 3: x = Math.random() * canvas.width; y = canvas.height; break;
+    }
+    enemies.push({ x, y, size: 20, speed: enemySpeed });
+  }
+}
+
+function drawUI() {
+  ctx.fillStyle = "white";
+  ctx.font = "20px Arial";
+  ctx.fillText(`Welle: ${wave}`, 10, 25);
+  ctx.fillText(`Punkte: ${score}`, 10, 50);
+  ctx.fillText(`Münzen: ${coins}`, 10, 75);
+  ctx.fillText(`Highscore: ${highScore}`, 650, 25);
+  ctx.fillText(`Rekordwelle: ${highWave}`, 650, 50);
+}
+
+function togglePause() {
+  paused = !paused;
+  pauseMenu.style.display = paused ? "flex" : "none";
+  if (!paused && player.alive) requestAnimationFrame(gameLoop);
+}
+
+function revivePlayer() {
+  if (coins < 100) return;
+  coins -= 100;
+  player.alive = true;
+  bullets = []; walls = [];
+  enemies = [];
+  spawnWave(); // aktuelle Welle neu starten
+  gameOverMenu.style.display = "none";
+  saveProgress();
+  requestAnimationFrame(gameLoop);
+}
+
+function gameOver() {
+  gameOverMenu.style.display = "flex";
+  scoreText.textContent = `Punkte: ${score}`;
+  reviveText.textContent = `Münzen: ${coins}`;
+  reviveBtn.style.display = coins >= 100 ? "block" : "none";
+  if (score > highScore) highScore = score;
+  if (wave > highWave) highWave = wave;
+  saveProgress();
+}
+
+function gameLoop() {
+  if (paused) return;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  if (!player.alive) { gameOver(); return; }
+  movePlayer(); moveEnemies(); moveBullets();
+  drawPlayer(); drawBullets(); drawEnemies(); drawWalls(); drawUI();
+
+  if (enemies.length === 0 && spawnCooldown <= 0) {
+    wave++; enemySpeed += 0.2; spawnWave(); spawnCooldown = 100;
+  }
+  if (spawnCooldown > 0) spawnCooldown--;
+  requestAnimationFrame(gameLoop);
+}
+
+// INPUT
+document.addEventListener("keydown", e => {
+  switch (e.key) {
+    case "w": player.dy = -player.speed; player.lastDir = "up"; break;
+    case "s": player.dy = player.speed; player.lastDir = "down"; break;
+    case "a": player.dx = -player.speed; player.lastDir = "left"; break;
+    case "d": player.dx = player.speed; player.lastDir = "right"; break;
+    case "Escape": togglePause(); break;
+  }
+});
+document.addEventListener("keyup", e => {
+  if (e.key === "w" || e.key === "s") player.dy = 0;
+  if (e.key === "a" || e.key === "d") player.dx = 0;
+});
+
+canvas.addEventListener("mousedown", e => {
+  e.preventDefault();
+  if (e.button === 0) shoot();
+  else if (e.button === 2) buildWall();
+});
+canvas.addEventListener("contextmenu", e => e.preventDefault());
+
+resumeBtn.onclick = togglePause;
+restartBtn.onclick = () => {
+  gameOverMenu.style.display = "none";
+  paused = false;
+  resetGame();
+  requestAnimationFrame(gameLoop);
+};
+reviveBtn.onclick = revivePlayer;
+
+spawnWave();
+gameLoop();
+</script>
+</body>
+</html>
