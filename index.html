@@ -48,6 +48,19 @@ button {
 .item-row { display:flex; justify-content:space-between; align-items:center; gap:12px; padding:8px 0; }
 .small { font-size:14px; color:#ddd; }
 #shopContainer { max-height: 60vh; overflow:auto; width:100%; }
+
+/* Make shop opaque and full cover, and add close X in top-left */
+#shopScreen { background: rgba(0,0,0,1); } /* fully cover */
+#shopScreen .card { background: #111; } /* non-transparent card */
+#shopCloseX {
+  position: absolute; left: 12px; top: 12px; z-index: 50;
+  background: transparent; color: white; border: none; font-size: 22px; cursor: pointer;
+}
+.binding-input { width: 56px; text-align:center; font-weight:bold; }
+
+/* layout for bindings inside start/pause card */
+.bindings { text-align:left; margin-top:8px; }
+.binding-row { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:6px 0; }
 </style>
 </head>
 <body>
@@ -63,6 +76,23 @@ button {
       <li><b>Rechtsklick / Shift</b> – Wand platzieren</li>
       <li><b>ESC</b> – Pause</li>
     </ul>
+
+    <!-- Item Key bindings (editable) -->
+    <div class="bindings">
+      <div class="binding-row">
+        <div>Slow-Item-Key (Slow Item)</div>
+        <input id="bindingSlow" class="binding-input" maxlength="1" />
+      </div>
+      <div class="binding-row">
+        <div>Piercing-Item-Key (Piercing Item)</div>
+        <input id="bindingPierce" class="binding-input" maxlength="1" />
+      </div>
+      <div class="binding-row">
+        <div>Wave-Skip-Key (Wave Skip Item)</div>
+        <input id="bindingSkip" class="binding-input" maxlength="1" />
+      </div>
+    </div>
+
     <div style="margin-top:12px;">
       <button id="openShopBtn">Shop</button>
       <button id="playBtn">Endless Mode</button>
@@ -76,6 +106,23 @@ button {
   <div class="card">
     <h1>Pausiert</h1>
     <p class="small">Steuerung: WASD, Schießen: Linksklick / Leertaste, Wände: Rechtsklick / Shift</p>
+
+    <!-- Same bindings in pause for quick change -->
+    <div class="bindings">
+      <div class="binding-row">
+        <div>Slow-Item-Key (Slow Item)</div>
+        <input id="pauseBindingSlow" class="binding-input" maxlength="1" />
+      </div>
+      <div class="binding-row">
+        <div>Piercing-Item-Key (Piercing Item)</div>
+        <input id="pauseBindingPierce" class="binding-input" maxlength="1" />
+      </div>
+      <div class="binding-row">
+        <div>Wave-Skip-Key (Wave Skip Item)</div>
+        <input id="pauseBindingSkip" class="binding-input" maxlength="1" />
+      </div>
+    </div>
+
     <button id="resumeBtn">Fortsetzen</button>
   </div>
 </div>
@@ -91,6 +138,7 @@ button {
 </div>
 <!-- SHOP -->
 <div id="shopScreen" class="overlay">
+  <button id="shopCloseX" title="Zurück ins Hauptmenü">✕</button>
   <div class="card">
     <h2>Shop</h2>
     <p class="small">Stock wird alle 5 Minuten global neu gesetzt.</p>
@@ -115,6 +163,11 @@ const savedCoins = localStorage.getItem("coins");
 const savedHighScore = localStorage.getItem("highScore");
 const savedHighWave = localStorage.getItem("highWave");
 
+// binding keys
+const savedBindSlow = localStorage.getItem("bindSlow");
+const savedBindPierce = localStorage.getItem("bindPierce");
+const savedBindSkip = localStorage.getItem("bindSkip");
+
 const canvas = document.getElementById("gameCanvas");
 const ctx = canvas.getContext("2d");
 const pauseMenu = document.getElementById("pauseMenu");
@@ -133,11 +186,20 @@ const shopCoinsEl = document.getElementById("shopCoins");
 const closeShopBtn = document.getElementById("closeShopBtn");
 const shopListEl = document.getElementById("shopList");
 const restockTimerEl = document.getElementById("restockTimer");
+const shopCloseX = document.getElementById("shopCloseX");
+
+// binding inputs (start + pause)
+const bindingSlow = document.getElementById("bindingSlow");
+const bindingPierce = document.getElementById("bindingPierce");
+const bindingSkip = document.getElementById("bindingSkip");
+const pauseBindingSlow = document.getElementById("pauseBindingSlow");
+const pauseBindingPierce = document.getElementById("pauseBindingPierce");
+const pauseBindingSkip = document.getElementById("pauseBindingSkip");
 const player = {
   x: 400,
   y: 300,
   size: 20,
-  speed: 4.5, // bereits 50% schneller wie du zuvor eingestellt hattest
+  speed: 4.5,
   lastDir: "right",
   alive: true
 };
@@ -149,7 +211,7 @@ let totalWallsBuilt = 0;
 
 let maxWalls = 10;
 let wave = savedWave !== null ? parseInt(savedWave) : 1;
-let enemySpeed = savedEnemySpeed !== null ? parseFloat(savedEnemySpeed) : 1.5; // base speed per enemy spawn
+let enemySpeed = savedEnemySpeed !== null ? parseFloat(savedEnemySpeed) : 1.5;
 let spawnCooldown = 0;
 let paused = false;
 let score = savedScore !== null ? parseInt(savedScore) : 0;
@@ -157,13 +219,28 @@ let coins = savedCoins !== null ? parseInt(savedCoins) : 0;
 let highScore = savedHighScore !== null ? parseInt(savedHighScore) : 0;
 let highWave = savedHighWave !== null ? parseInt(savedHighWave) : 0;
 
+// inventory: counts of items the player owns (bought)
+let inventory = { slow: 0, pierce: 0, skip: 0 };
+
 // Shop + item flags
-let playerPiercing = false; // next shot will pierce
+let playerPiercing = false; // used when consuming pierce item on activation
 let enemySlowMultiplier = 1; // 0.5 during slow effect
 let slowTimeoutId = null;
 
+// Key bindings: default values if not saved
+let bindSlow = savedBindSlow || "1";
+let bindPierce = savedBindPierce || "2";
+let bindSkip = savedBindSkip || "3";
+
+// show coins and populate binding inputs
 startCoinsEl.textContent = coins;
 shopCoinsEl.textContent = coins;
+bindingSlow.value = bindSlow.toUpperCase();
+bindingPierce.value = bindPierce.toUpperCase();
+bindingSkip.value = bindSkip.toUpperCase();
+pauseBindingSlow.value = bindSlow.toUpperCase();
+pauseBindingPierce.value = bindPierce.toUpperCase();
+pauseBindingSkip.value = bindSkip.toUpperCase();
 function drawPlayer() {
   ctx.fillStyle = "cyan";
   ctx.fillRect(player.x, player.y, player.size, player.size);
@@ -193,9 +270,11 @@ function drawUI() {
   ctx.fillText(`Wände: ${totalWallsBuilt}/${maxWalls}`, 10, 50);
   ctx.fillText(`Punkte: ${score}`, 10, 75);
   ctx.fillText(`Münzen: ${coins}`, 10, 100);
-  ctx.fillText(`Highscore: ${highScore}`, 10, 125);
-  ctx.fillText(`Rekordwelle: ${highWave}`, 10, 150);
+  ctx.fillText(`Inv S:${inventory.slow} P:${inventory.pierce} K:${inventory.skip}`, 10, 130);
+  ctx.fillText(`Highscore: ${highScore}`, 10, 150);
+  ctx.fillText(`Rekordwelle: ${highWave}`, 10, 175);
 }
+
 function checkWallCollision(x, y, w, h) {
   return walls.some(wall => (
     x < wall.x + wall.size &&
@@ -216,6 +295,19 @@ function isColliding(a, b) {
 
 const keys = {};
 document.addEventListener("keydown", e => {
+  // If user is typing into an input, don't trigger item activation or movement bindings
+  if (document.activeElement && document.activeElement.tagName === "INPUT") {
+    // allow setting bindings with keyboard but do nothing else
+    return;
+  }
+
+  const key = e.key.toLowerCase();
+
+  // Item activation by bound keys
+  if (key === bindSlow.toLowerCase()) { activateSlowItem(); return; }
+  if (key === bindPierce.toLowerCase()) { activatePierceItem(); return; }
+  if (key === bindSkip.toLowerCase()) { activateSkipItem(); return; }
+
   keys[e.key.toLowerCase()] = true;
   if (e.code === "Space") shoot();
   if (e.shiftKey) buildWall();
@@ -272,7 +364,7 @@ function shoot() {
     piercing: playerPiercing
   });
 
-  // consume piercing if active
+  // consume piercing on fire (it was set when player activated item)
   if (playerPiercing) playerPiercing = false;
 }
 
@@ -295,7 +387,6 @@ function moveEnemies() {
     const dx = player.x - e.x;
     const dy = player.y - e.y;
     const dist = Math.hypot(dx, dy) || 1;
-    // use baseSpeed * global slow multiplier
     const effectiveSpeed = (e.baseSpeed || e.speed) * enemySlowMultiplier;
     const moveX = (dx / dist) * effectiveSpeed;
     const moveY = (dy / dist) * effectiveSpeed;
@@ -315,22 +406,17 @@ function moveBullets() {
   bullets.forEach((b, i) => {
     b.x += b.dx; b.y += b.dy;
 
-    // remove if out of bounds
     if (b.x < -50 || b.x > canvas.width+50 || b.y < -50 || b.y > canvas.height+50) { bullets.splice(i,1); return; }
 
-    // collide with walls only if not piercing
     if (!b.piercing && checkWallCollision(b.x, b.y, b.size, b.size)) { bullets.splice(i,1); return; }
 
-    // enemy collisions
     for (let j = enemies.length - 1; j >= 0; j--) {
       const e = enemies[j];
       if (isColliding(b, e)) {
-        // if piercing: don't remove bullet, else remove
         if (!b.piercing) bullets.splice(i,1);
         enemies.splice(j,1);
         score++; coins++;
         saveGame();
-        // if bullet was removed, break outer loop properly
         break;
       }
     }
@@ -353,18 +439,36 @@ function spawnWave(isRevive=false) {
   if (!isRevive) { wave++; enemySpeed += 0.15; saveGame(); }
 }
 
-function applySlowItem() {
-  // 5 Sekunden lang Gegner 50% langsamer
+function applySlowItemEffect() {
   if (slowTimeoutId) clearTimeout(slowTimeoutId);
   enemySlowMultiplier = 0.5;
   slowTimeoutId = setTimeout(() => { enemySlowMultiplier = 1; slowTimeoutId = null; }, 5000);
 }
 
-function useWaveSkip() {
-  // überspringe eine ganze Welle: erhöhe wave und spawn neue wave
+function activateSlowItem() {
+  if (inventory.slow <= 0) { /* no item */ return; }
+  inventory.slow--;
+  applySlowItemEffect();
+  saveGame();
+  renderShop();
+}
+
+function activatePierceItem() {
+  if (inventory.pierce <= 0) return;
+  inventory.pierce--;
+  playerPiercing = true;
+  saveGame();
+  renderShop();
+}
+
+function activateSkipItem() {
+  if (inventory.skip <= 0) return;
+  inventory.skip--;
+  // skip current wave: increment wave and spawn new
   wave++;
   spawnWave();
   saveGame();
+  renderShop();
 }
 
 function saveGame() {
@@ -374,8 +478,13 @@ function saveGame() {
   localStorage.setItem("enemySpeed", enemySpeed);
   localStorage.setItem("highScore", highScore);
   localStorage.setItem("highWave", highWave);
+  // save bindings and inventory
+  localStorage.setItem("bindSlow", bindSlow);
+  localStorage.setItem("bindPierce", bindPierce);
+  localStorage.setItem("bindSkip", bindSkip);
+  localStorage.setItem("inventory", JSON.stringify(inventory));
 }
-// --- Deterministic RNG using restockTick as seed (mulberry32) ---
+// deterministic RNG mulberry32
 function mulberry32(a) {
   return function() {
     a |= 0; a = a + 0x6D2B79F5 | 0;
@@ -385,7 +494,6 @@ function mulberry32(a) {
   }
 }
 
-// Item definitions
 const ITEMS = {
   slow: { id: "slow", name: "Slow (5s -50%)", price: 20, desc: "Gegner 5s langsamer" },
   pierce: { id: "pierce", name: "Piercing Shot (nächster Schuss)", price: 10, desc: "Nächster Schuss durchdringt Gegner & Wände" },
@@ -393,32 +501,30 @@ const ITEMS = {
 };
 let shopStock = { slow: 1, pierce: 0, skip: 0 };
 
-// restock calculation deterministic by tick
 function calculateStockForTick(tick) {
   const rand = mulberry32(tick);
   const stock = { slow: 1, pierce: 0, skip: 0 };
 
-  // Slow item: always >=1. Determine if +1 (50%) and if +1 more (33%).
   if (rand() < 0.5) stock.slow = 2;
   if (rand() < 0.33) stock.slow = Math.min(3, stock.slow + 1);
 
-  // Piercing: 50% chance 1, 20% chance 2
   const rPierce = rand();
   if (rPierce < 0.5) stock.pierce = 1;
-  if (rPierce < 0.2) stock.pierce = 2; // note: if <0.2 then also <0.5, so becomes 2
+  if (rPierce < 0.2) stock.pierce = 2;
 
-  // Skip: 10% chance 1
   if (rand() < 0.1) stock.skip = 1;
 
   return stock;
 }
 
 function updateShopStockFromNow() {
-  const tick = Math.floor(Date.now() / (5 * 60 * 1000)); // 5-minute ticks
+  const tick = Math.floor(Date.now() / (5 * 60 * 1000));
   shopStock = calculateStockForTick(tick);
   renderShop();
   updateRestockTimer();
 }
+
+// render shop showing stock and buy buttons, buying increments inventory (not auto-apply)
 function renderShop() {
   shopListEl.innerHTML = "";
   for (const key of ["slow","pierce","skip"]) {
@@ -429,6 +535,7 @@ function renderShop() {
     row.innerHTML = `<div>
         <strong>${it.name}</strong>
         <div class="small">${it.desc} — Preis: ${it.price} Münzen</div>
+        <div class="small">Du hast: ${inventory[key] || 0}</div>
       </div>
       <div>
         <div class="small">Stock: ${count}</div>
@@ -439,24 +546,19 @@ function renderShop() {
   }
   shopCoinsEl.textContent = coins;
   startCoinsEl.textContent = coins;
+  // also update inventory in localStorage display
 }
 
 function buyItem(key) {
   const it = ITEMS[key];
   if (!shopStock[key] || shopStock[key] <= 0) { alert("Nicht vorrätig"); return; }
   if (coins < it.price) { alert("Nicht genug Münzen"); return; }
-  // Deduct
   coins -= it.price;
   shopStock[key]--;
+  inventory[key] = (inventory[key] || 0) + 1;
   saveGame();
-  // Apply effect
-  if (key === "slow") applySlowItem();
-  if (key === "pierce") playerPiercing = true;
-  if (key === "skip") useWaveSkip();
   renderShop();
 }
-
-// restock timer UI
 function updateRestockTimer() {
   const msPerTick = 5 * 60 * 1000;
   const now = Date.now();
@@ -468,21 +570,25 @@ function updateRestockTimer() {
   restockTimerEl.textContent = `${String(minutes).padStart(2,'0')}:${String(seconds).padStart(2,'0')}`;
 }
 
-// update restock every second (timer) and update stock exactly on tick change
 let lastTick = Math.floor(Date.now() / (5 * 60 * 1000));
 setInterval(() => {
   const tick = Math.floor(Date.now() / (5 * 60 * 1000));
   if (tick !== lastTick) {
     lastTick = tick;
-    updateShopStockFromNow(); // re-calc stock deterministically
+    updateShopStockFromNow();
   } else {
     updateRestockTimer();
   }
 }, 1000);
 
-// UI wiring
+// wiring
 openShopBtn.addEventListener("click", () => { shopScreen.style.display = "flex"; renderShop(); });
 closeShopBtn.addEventListener("click", () => { shopScreen.style.display = "none"; });
+shopCloseX.addEventListener("click", () => {
+  // close shop and return to main menu (start screen)
+  shopScreen.style.display = "none";
+  startScreen.style.display = "flex";
+});
 playBtn.addEventListener("click", () => {
   startScreen.style.display = "none";
   spawnWave();
@@ -514,10 +620,51 @@ restartBtn.addEventListener("click", () => {
   gameLoop();
 });
 
+// binding inputs: when user changes an input, save binding (both start and pause mirrored)
+function setBindingsFromInputs() {
+  const a = (bindingSlow.value || "").slice(0,1) || bindSlow;
+  const b = (bindingPierce.value || "").slice(0,1) || bindPierce;
+  const c = (bindingSkip.value || "").slice(0,1) || bindSkip;
+  bindSlow = a.toLowerCase(); bindPierce = b.toLowerCase(); bindSkip = c.toLowerCase();
+  // mirror to pause inputs
+  pauseBindingSlow.value = bindingSlow.value.toUpperCase();
+  pauseBindingPierce.value = bindingPierce.value.toUpperCase();
+  pauseBindingSkip.value = bindingSkip.value.toUpperCase();
+  localStorage.setItem("bindSlow", bindSlow);
+  localStorage.setItem("bindPierce", bindPierce);
+  localStorage.setItem("bindSkip", bindSkip);
+}
+
+bindingSlow.addEventListener("change", setBindingsFromInputs);
+bindingPierce.addEventListener("change", setBindingsFromInputs);
+bindingSkip.addEventListener("change", setBindingsFromInputs);
+pauseBindingSlow.addEventListener("change", (e) => { bindingSlow.value = pauseBindingSlow.value; setBindingsFromInputs(); });
+pauseBindingPierce.addEventListener("change", (e) => { bindingPierce.value = pauseBindingPierce.value; setBindingsFromInputs(); });
+pauseBindingSkip.addEventListener("change", (e) => { bindingSkip.value = pauseBindingSkip.value; setBindingsFromInputs(); });
+
+// load saved inventory if any
+const savedInv = localStorage.getItem("inventory");
+if (savedInv) {
+  try { inventory = JSON.parse(savedInv); } catch(e){ inventory = { slow:0,pierce:0,skip:0 }; }
+}
+
 // initial rendering of the shop stock (based on current tick)
 updateShopStockFromNow();
 
-// Game Loop
+// Start screen visible on load; update coins/bindings
+window.addEventListener("load", () => {
+  startScreen.style.display = "flex";
+  startCoinsEl.textContent = coins;
+  shopCoinsEl.textContent = coins;
+  bindingSlow.value = (localStorage.getItem("bindSlow") || bindSlow).toUpperCase();
+  bindingPierce.value = (localStorage.getItem("bindPierce") || bindPierce).toUpperCase();
+  bindingSkip.value = (localStorage.getItem("bindSkip") || bindSkip).toUpperCase();
+  pauseBindingSlow.value = bindingSlow.value;
+  pauseBindingPierce.value = bindingPierce.value;
+  pauseBindingSkip.value = bindingSkip.value;
+});
+
+// Game loop + helpers
 let animationId;
 function togglePause() {
   if (!player.alive) return;
@@ -555,15 +702,6 @@ function gameLoop() {
 
   animationId = requestAnimationFrame(gameLoop);
 }
-
-// Start screen is already visible from HTML; just sync coins and shop
-window.addEventListener("load", () => {
-  startCoinsEl.textContent = coins;
-  shopCoinsEl.textContent = coins;
-  updateShopStockFromNow();
-});
 </script>
 </body>
 </html>
-
-
