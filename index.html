@@ -556,13 +556,14 @@ function gameLoop() {
   animationId = requestAnimationFrame(gameLoop);
 }
 
-// Start screen is visible on load
-window.onload = () => {
-  startScreen.style.display = "flex";
-  // Update coins shown
+// Start screen is already visible from HTML; just sync coins and shop
+window.addEventListener("load", () => {
   startCoinsEl.textContent = coins;
   shopCoinsEl.textContent = coins;
-};
+  updateShopStockFromNow();
+});
+
 </script>
 </body>
 </html>
+
