@@ -15,44 +15,96 @@ body {
   user-select: none;
   font-family: Arial, sans-serif;
 }
-#pauseMenu, #gameOverScreen {
+/* Overlays (Start, Pause, GameOver, Shop) */
+.overlay {
   position: absolute;
   inset: 0;
   display: none;
   align-items: center;
   justify-content: center;
   flex-direction: column;
-  background: rgba(0,0,0,0.8);
+  background: rgba(0,0,0,0.85);
   color: white;
+  text-align: center;
+  padding: 20px;
+}
+.card {
+  background: rgba(255,255,255,0.03);
+  padding: 18px;
+  border-radius: 12px;
+  min-width: 320px;
+  max-width: 720px;
+  box-shadow: 0 6px 18px rgba(0,0,0,0.6);
 }
 button {
-  margin: 10px;
-  padding: 10px 20px;
+  margin: 8px;
+  padding: 10px 18px;
   font-size: 16px;
   border: none;
   border-radius: 8px;
   cursor: pointer;
 }
+.shop-list { text-align:left; margin-top:12px; }
+.item-row { display:flex; justify-content:space-between; align-items:center; gap:12px; padding:8px 0; }
+.small { font-size:14px; color:#ddd; }
+#shopContainer { max-height: 60vh; overflow:auto; width:100%; }
 </style>
 </head>
 <body>
 <canvas id="gameCanvas" width="800" height="600"></canvas>
-<div id="pauseMenu">
-  <h1>Pausiert</h1>
-  <p>Steuerung:</p>
-  <ul style="text-align:left;">
-    <li><b>WASD</b> – Bewegen</li>
-    <li><b>Linksklick / Leertaste</b> – Schießen</li>
-    <li><b>Rechtsklick / Shift</b> – Wand platzieren</li>
-    <li><b>ESC</b> – Pause</li>
-  </ul>
-  <button id="resumeBtn">Fortsetzen</button>
+<!-- START SCREEN -->
+<div id="startScreen" class="overlay" style="display:flex;">
+  <div class="card">
+    <h1>Survival — Startmenü</h1>
+    <p class="small">Steuerung des Spiels:</p>
+    <ul style="text-align:left;">
+      <li><b>WASD</b> – Bewegen</li>
+      <li><b>Linksklick / Leertaste</b> – Schießen</li>
+      <li><b>Rechtsklick / Shift</b> – Wand platzieren</li>
+      <li><b>ESC</b> – Pause</li>
+    </ul>
+    <div style="margin-top:12px;">
+      <button id="openShopBtn">Shop</button>
+      <button id="playBtn">Endless Mode</button>
+    </div>
+    <p class="small" style="margin-top:8px;">Münzen: <span id="startCoins">0</span></p>
+  </div>
 </div>
-<div id="gameOverScreen">
-  <h1>GAME OVER</h1>
-  <p id="finalScore"></p>
-  <button id="reviveBtn">Für 100 Münzen wiederbeleben</button>
-  <button id="restartBtn">Neustart</button>
+
+<!-- PAUSE MENU -->
+<div id="pauseMenu" class="overlay">
+  <div class="card">
+    <h1>Pausiert</h1>
+    <p class="small">Steuerung: WASD, Schießen: Linksklick / Leertaste, Wände: Rechtsklick / Shift</p>
+    <button id="resumeBtn">Fortsetzen</button>
+  </div>
+</div>
+
+<!-- GAME OVER -->
+<div id="gameOverScreen" class="overlay">
+  <div class="card">
+    <h1>GAME OVER</h1>
+    <p id="finalScore"></p>
+    <button id="reviveBtn">Für 100 Münzen wiederbeleben</button>
+    <button id="restartBtn">Neustart</button>
+  </div>
+</div>
+<!-- SHOP -->
+<div id="shopScreen" class="overlay">
+  <div class="card">
+    <h2>Shop</h2>
+    <p class="small">Stock wird alle 5 Minuten global neu gesetzt.</p>
+    <div id="shopContainer">
+      <div class="shop-list" id="shopList">
+        <!-- Items werden per JS eingefügt -->
+      </div>
+    </div>
+    <p class="small">Münzen: <span id="shopCoins">0</span></p>
+    <p class="small">Nächster Restock in: <span id="restockTimer">--:--</span></p>
+    <div style="margin-top:12px;">
+      <button id="closeShopBtn">Zurück</button>
+    </div>
+  </div>
 </div>
 <script>
 // === Storage laden, falls vorhanden ===
@@ -62,6 +114,7 @@ const savedScore = localStorage.getItem("score");
 const savedCoins = localStorage.getItem("coins");
 const savedHighScore = localStorage.getItem("highScore");
 const savedHighWave = localStorage.getItem("highWave");
+
 const canvas = document.getElementById("gameCanvas");
 const ctx = canvas.getContext("2d");
 const pauseMenu = document.getElementById("pauseMenu");
@@ -70,11 +123,21 @@ const finalScore = document.getElementById("finalScore");
 const reviveBtn = document.getElementById("reviveBtn");
 const restartBtn = document.getElementById("restartBtn");
 
+// Start & Shop elements
+const startScreen = document.getElementById("startScreen");
+const playBtn = document.getElementById("playBtn");
+const openShopBtn = document.getElementById("openShopBtn");
+const startCoinsEl = document.getElementById("startCoins");
+const shopScreen = document.getElementById("shopScreen");
+const shopCoinsEl = document.getElementById("shopCoins");
+const closeShopBtn = document.getElementById("closeShopBtn");
+const shopListEl = document.getElementById("shopList");
+const restockTimerEl = document.getElementById("restockTimer");
 const player = {
   x: 400,
   y: 300,
   size: 20,
-  speed: 4,5,
+  speed: 4.5, // bereits 50% schneller wie du zuvor eingestellt hattest
   lastDir: "right",
   alive: true
 };
@@ -86,13 +149,21 @@ let totalWallsBuilt = 0;
 
 let maxWalls = 10;
 let wave = savedWave !== null ? parseInt(savedWave) : 1;
-let enemySpeed = savedEnemySpeed !== null ? parseFloat(savedEnemySpeed)/1.5 : 1.5;
+let enemySpeed = savedEnemySpeed !== null ? parseFloat(savedEnemySpeed) : 1.5; // base speed per enemy spawn
 let spawnCooldown = 0;
 let paused = false;
 let score = savedScore !== null ? parseInt(savedScore) : 0;
 let coins = savedCoins !== null ? parseInt(savedCoins) : 0;
 let highScore = savedHighScore !== null ? parseInt(savedHighScore) : 0;
 let highWave = savedHighWave !== null ? parseInt(savedHighWave) : 0;
+
+// Shop + item flags
+let playerPiercing = false; // next shot will pierce
+let enemySlowMultiplier = 1; // 0.5 during slow effect
+let slowTimeoutId = null;
+
+startCoinsEl.textContent = coins;
+shopCoinsEl.textContent = coins;
 function drawPlayer() {
   ctx.fillStyle = "cyan";
   ctx.fillRect(player.x, player.y, player.size, player.size);
@@ -146,11 +217,7 @@ function isColliding(a, b) {
 const keys = {};
 document.addEventListener("keydown", e => {
   keys[e.key.toLowerCase()] = true;
-
-  // Schießen mit Leertaste
   if (e.code === "Space") shoot();
-
-  // Wand bauen mit Shift
   if (e.shiftKey) buildWall();
 
   if (["w","a","s","d"].includes(e.key.toLowerCase())) {
@@ -164,6 +231,7 @@ document.addEventListener("keydown", e => {
   if (e.key === "Escape") togglePause();
 });
 document.addEventListener("keyup", e => delete keys[e.key.toLowerCase()]);
+
 function handleMovement() {
   let dx = 0, dy = 0;
   if (keys["w"]) dy -= 1;
@@ -177,7 +245,6 @@ function handleMovement() {
   player.x = (player.x + dx + canvas.width) % canvas.width;
   player.y = (player.y + dy + canvas.height) % canvas.height;
 }
-
 function shoot() {
   const size = 6;
   const speed = 6.75;
@@ -201,9 +268,14 @@ function shoot() {
   bullets.push({
     x: player.x + player.size/2 - size/2,
     y: player.y + player.size/2 - size/2,
-    dx, dy, size
+    dx, dy, size,
+    piercing: playerPiercing
   });
+
+  // consume piercing if active
+  if (playerPiercing) playerPiercing = false;
 }
+
 function buildWall() {
   if (walls.length >= maxWalls) return;
   const offset = 25;
@@ -222,9 +294,11 @@ function moveEnemies() {
   enemies.forEach(e => {
     const dx = player.x - e.x;
     const dy = player.y - e.y;
-    const dist = Math.hypot(dx, dy);
-    const moveX = (dx / dist) * e.speed;
-    const moveY = (dy / dist) * e.speed;
+    const dist = Math.hypot(dx, dy) || 1;
+    // use baseSpeed * global slow multiplier
+    const effectiveSpeed = (e.baseSpeed || e.speed) * enemySlowMultiplier;
+    const moveX = (dx / dist) * effectiveSpeed;
+    const moveY = (dy / dist) * effectiveSpeed;
 
     if (!checkWallCollision(e.x + moveX, e.y, e.size, e.size)) e.x += moveX;
     if (!checkWallCollision(e.x, e.y + moveY, e.size, e.size)) e.y += moveY;
@@ -236,25 +310,32 @@ function moveEnemies() {
     }
   });
 }
+
 function moveBullets() {
   bullets.forEach((b, i) => {
     b.x += b.dx; b.y += b.dy;
 
-    if (b.x < 0 || b.x > canvas.width || b.y < 0 || b.y > canvas.height) { bullets.splice(i,1); return; }
+    // remove if out of bounds
+    if (b.x < -50 || b.x > canvas.width+50 || b.y < -50 || b.y > canvas.height+50) { bullets.splice(i,1); return; }
 
-    if (checkWallCollision(b.x, b.y, b.size, b.size)) { bullets.splice(i,1); return; }
+    // collide with walls only if not piercing
+    if (!b.piercing && checkWallCollision(b.x, b.y, b.size, b.size)) { bullets.splice(i,1); return; }
 
-    enemies.forEach((e, j) => {
+    // enemy collisions
+    for (let j = enemies.length - 1; j >= 0; j--) {
+      const e = enemies[j];
       if (isColliding(b, e)) {
-        bullets.splice(i,1);
+        // if piercing: don't remove bullet, else remove
+        if (!b.piercing) bullets.splice(i,1);
         enemies.splice(j,1);
         score++; coins++;
         saveGame();
+        // if bullet was removed, break outer loop properly
+        break;
       }
-    });
+    }
   });
 }
-
 function spawnWave(isRevive=false) {
   const count = wave + 2;
   if (!isRevive) walls = [];
@@ -267,10 +348,177 @@ function spawnWave(isRevive=false) {
       case 2: x = Math.random() * canvas.width; y = 0; break;
       case 3: x = Math.random() * canvas.width; y = canvas.height; break;
     }
-    enemies.push({ x, y, size: 20, speed: enemySpeed });
+    enemies.push({ x, y, size: 20, speed: enemySpeed, baseSpeed: enemySpeed });
   }
   if (!isRevive) { wave++; enemySpeed += 0.15; saveGame(); }
 }
+
+function applySlowItem() {
+  // 5 Sekunden lang Gegner 50% langsamer
+  if (slowTimeoutId) clearTimeout(slowTimeoutId);
+  enemySlowMultiplier = 0.5;
+  slowTimeoutId = setTimeout(() => { enemySlowMultiplier = 1; slowTimeoutId = null; }, 5000);
+}
+
+function useWaveSkip() {
+  // überspringe eine ganze Welle: erhöhe wave und spawn neue wave
+  wave++;
+  spawnWave();
+  saveGame();
+}
+
+function saveGame() {
+  localStorage.setItem("score", score);
+  localStorage.setItem("coins", coins);
+  localStorage.setItem("wave", wave);
+  localStorage.setItem("enemySpeed", enemySpeed);
+  localStorage.setItem("highScore", highScore);
+  localStorage.setItem("highWave", highWave);
+}
+// --- Deterministic RNG using restockTick as seed (mulberry32) ---
+function mulberry32(a) {
+  return function() {
+    a |= 0; a = a + 0x6D2B79F5 | 0;
+    var t = Math.imul(a ^ a >>> 15, 1 | a);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  }
+}
+
+// Item definitions
+const ITEMS = {
+  slow: { id: "slow", name: "Slow (5s -50%)", price: 20, desc: "Gegner 5s langsamer" },
+  pierce: { id: "pierce", name: "Piercing Shot (nächster Schuss)", price: 10, desc: "Nächster Schuss durchdringt Gegner & Wände" },
+  skip: { id: "skip", name: "Wave Skip", price: 60, desc: "Überspringe eine Welle" }
+};
+let shopStock = { slow: 1, pierce: 0, skip: 0 };
+
+// restock calculation deterministic by tick
+function calculateStockForTick(tick) {
+  const rand = mulberry32(tick);
+  const stock = { slow: 1, pierce: 0, skip: 0 };
+
+  // Slow item: always >=1. Determine if +1 (50%) and if +1 more (33%).
+  if (rand() < 0.5) stock.slow = 2;
+  if (rand() < 0.33) stock.slow = Math.min(3, stock.slow + 1);
+
+  // Piercing: 50% chance 1, 20% chance 2
+  const rPierce = rand();
+  if (rPierce < 0.5) stock.pierce = 1;
+  if (rPierce < 0.2) stock.pierce = 2; // note: if <0.2 then also <0.5, so becomes 2
+
+  // Skip: 10% chance 1
+  if (rand() < 0.1) stock.skip = 1;
+
+  return stock;
+}
+
+function updateShopStockFromNow() {
+  const tick = Math.floor(Date.now() / (5 * 60 * 1000)); // 5-minute ticks
+  shopStock = calculateStockForTick(tick);
+  renderShop();
+  updateRestockTimer();
+}
+function renderShop() {
+  shopListEl.innerHTML = "";
+  for (const key of ["slow","pierce","skip"]) {
+    const it = ITEMS[key];
+    const count = shopStock[key] || 0;
+    const row = document.createElement("div");
+    row.className = "item-row";
+    row.innerHTML = `<div>
+        <strong>${it.name}</strong>
+        <div class="small">${it.desc} — Preis: ${it.price} Münzen</div>
+      </div>
+      <div>
+        <div class="small">Stock: ${count}</div>
+        <button data-item="${key}" ${count===0 ? "disabled" : ""}>Kaufen</button>
+      </div>`;
+    shopListEl.appendChild(row);
+    row.querySelector("button").addEventListener("click", () => buyItem(key));
+  }
+  shopCoinsEl.textContent = coins;
+  startCoinsEl.textContent = coins;
+}
+
+function buyItem(key) {
+  const it = ITEMS[key];
+  if (!shopStock[key] || shopStock[key] <= 0) { alert("Nicht vorrätig"); return; }
+  if (coins < it.price) { alert("Nicht genug Münzen"); return; }
+  // Deduct
+  coins -= it.price;
+  shopStock[key]--;
+  saveGame();
+  // Apply effect
+  if (key === "slow") applySlowItem();
+  if (key === "pierce") playerPiercing = true;
+  if (key === "skip") useWaveSkip();
+  renderShop();
+}
+
+// restock timer UI
+function updateRestockTimer() {
+  const msPerTick = 5 * 60 * 1000;
+  const now = Date.now();
+  const tick = Math.floor(now / msPerTick);
+  const nextTickStart = (tick + 1) * msPerTick;
+  const diff = Math.max(0, nextTickStart - now);
+  const minutes = Math.floor(diff / 60000);
+  const seconds = Math.floor((diff % 60000) / 1000);
+  restockTimerEl.textContent = `${String(minutes).padStart(2,'0')}:${String(seconds).padStart(2,'0')}`;
+}
+
+// update restock every second (timer) and update stock exactly on tick change
+let lastTick = Math.floor(Date.now() / (5 * 60 * 1000));
+setInterval(() => {
+  const tick = Math.floor(Date.now() / (5 * 60 * 1000));
+  if (tick !== lastTick) {
+    lastTick = tick;
+    updateShopStockFromNow(); // re-calc stock deterministically
+  } else {
+    updateRestockTimer();
+  }
+}, 1000);
+
+// UI wiring
+openShopBtn.addEventListener("click", () => { shopScreen.style.display = "flex"; renderShop(); });
+closeShopBtn.addEventListener("click", () => { shopScreen.style.display = "none"; });
+playBtn.addEventListener("click", () => {
+  startScreen.style.display = "none";
+  spawnWave();
+  gameLoop();
+});
+
+// Pause / Resume wiring
+document.getElementById("resumeBtn").addEventListener("click", togglePause);
+reviveBtn.addEventListener("click", () => {
+  if (coins >= 100) {
+    coins -= 100;
+    player.alive = true;
+    bullets = [];
+    enemies = [];
+    spawnWave(true);
+    gameOverScreen.style.display = "none";
+    saveGame();
+    gameLoop();
+  } else alert("Nicht genug Münzen!");
+});
+restartBtn.addEventListener("click", () => {
+  enemies = []; bullets = []; walls = [];
+  score = 0; wave = 1; enemySpeed = 1.5;
+  totalWallsBuilt = 0;
+  player.alive = true; player.x = 400; player.y = 300;
+  gameOverScreen.style.display = "none";
+  saveGame();
+  spawnWave();
+  gameLoop();
+});
+
+// initial rendering of the shop stock (based on current tick)
+updateShopStockFromNow();
+
+// Game Loop
+let animationId;
 function togglePause() {
   if (!player.alive) return;
   paused = !paused;
@@ -286,47 +534,6 @@ function gameOver() {
   saveGame();
 }
 
-reviveBtn.addEventListener("click", () => {
-  if (coins >= 100) {
-    coins -= 100;
-    player.alive = true;
-    bullets = [];
-    enemies = [];
-    spawnWave(true);
-    gameOverScreen.style.display = "none";
-    saveGame();
-    gameLoop();
-  } else alert("Nicht genug Münzen!");
-});
-
-restartBtn.addEventListener("click", () => {
-  enemies = []; bullets = []; walls = [];
-  score = 0; wave = 1; enemySpeed = 2;
-  totalWallsBuilt = 0;
-  player.alive = true; player.x = 400; player.y = 300;
-  gameOverScreen.style.display = "none";
-  saveGame();
-  spawnWave();
-  gameLoop();
-});
-document.getElementById("resumeBtn").addEventListener("click", togglePause);
-canvas.addEventListener("mousedown", e => {
-  e.preventDefault();
-  if (e.button === 0) shoot();
-  else if (e.button === 2) buildWall();
-});
-canvas.addEventListener("contextmenu", e => e.preventDefault());
-
-function saveGame() {
-  localStorage.setItem("score", score);
-  localStorage.setItem("coins", coins);
-  localStorage.setItem("wave", wave);
-  localStorage.setItem("enemySpeed", enemySpeed);
-  localStorage.setItem("highScore", highScore);
-  localStorage.setItem("highWave", highWave);
-}
-
-let animationId;
 function gameLoop() {
   if (paused || !player.alive) return;
 
@@ -349,11 +556,13 @@ function gameLoop() {
   animationId = requestAnimationFrame(gameLoop);
 }
 
+// Start screen is visible on load
 window.onload = () => {
-  spawnWave();
-  gameLoop();
+  startScreen.style.display = "flex";
+  // Update coins shown
+  startCoinsEl.textContent = coins;
+  shopCoinsEl.textContent = coins;
 };
 </script>
 </body>
 </html>
-
