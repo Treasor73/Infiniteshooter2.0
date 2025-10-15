@@ -76,7 +76,6 @@ button {
       <li><b>Rechtsklick / Shift</b> – Wand platzieren</li>
       <li><b>ESC</b> – Pause</li>
     </ul>
-
     <!-- Item Key bindings (editable) -->
     <div class="bindings">
       <div class="binding-row">
@@ -126,7 +125,6 @@ button {
     <button id="resumeBtn">Fortsetzen</button>
   </div>
 </div>
-
 <!-- GAME OVER -->
 <div id="gameOverScreen" class="overlay">
   <div class="card">
@@ -162,7 +160,6 @@ const savedScore = localStorage.getItem("score");
 const savedCoins = localStorage.getItem("coins");
 const savedHighScore = localStorage.getItem("highScore");
 const savedHighWave = localStorage.getItem("highWave");
-
 // binding keys
 const savedBindSlow = localStorage.getItem("bindSlow");
 const savedBindPierce = localStorage.getItem("bindPierce");
@@ -231,7 +228,6 @@ let slowTimeoutId = null;
 let bindSlow = savedBindSlow || "1";
 let bindPierce = savedBindPierce || "2";
 let bindSkip = savedBindSkip || "3";
-
 // show coins and populate binding inputs
 startCoinsEl.textContent = coins;
 shopCoinsEl.textContent = coins;
@@ -292,7 +288,6 @@ function isColliding(a, b) {
     a.y + a.size > b.y
   );
 }
-
 const keys = {};
 document.addEventListener("keydown", e => {
   // If user is typing into an input, don't trigger item activation or movement bindings
@@ -324,6 +319,23 @@ document.addEventListener("keydown", e => {
 });
 document.addEventListener("keyup", e => delete keys[e.key.toLowerCase()]);
 
+// --- MOUSE HANDLERS (FIX) ---
+// Linksklick schießt; Rechtsklick baut Wand (und verhindert Kontextmenü).
+// Diese Handler sind die minimale Änderung um Linksklick/ Rechtsklick zu aktivieren.
+canvas.addEventListener("mousedown", (e) => {
+  // Wenn ein Input gerade fokussiert ist, ignoriere Mausklicks (benutzer tippt)
+  if (document.activeElement && document.activeElement.tagName === "INPUT") return;
+  // left click -> shoot
+  if (e.button === 0) {
+    shoot();
+  }
+  // right click -> build wall
+  if (e.button === 2) {
+    buildWall();
+  }
+});
+// Verhindere das Kontextmenü auf dem Canvas (so dass Rechtsklick für das Spiel genutzt wird)
+canvas.addEventListener("contextmenu", (e) => { e.preventDefault(); });
 function handleMovement() {
   let dx = 0, dy = 0;
   if (keys["w"]) dy -= 1;
@@ -401,7 +413,6 @@ function moveEnemies() {
     }
   });
 }
-
 function moveBullets() {
   bullets.forEach((b, i) => {
     b.x += b.dx; b.y += b.dy;
@@ -444,7 +455,6 @@ function applySlowItemEffect() {
   enemySlowMultiplier = 0.5;
   slowTimeoutId = setTimeout(() => { enemySlowMultiplier = 1; slowTimeoutId = null; }, 5000);
 }
-
 function activateSlowItem() {
   if (inventory.slow <= 0) { /* no item */ return; }
   inventory.slow--;
@@ -493,7 +503,6 @@ function mulberry32(a) {
     return ((t ^ t >>> 14) >>> 0) / 4294967296;
   }
 }
-
 const ITEMS = {
   slow: { id: "slow", name: "Slow (5s -50%)", price: 20, desc: "Gegner 5s langsamer" },
   pierce: { id: "pierce", name: "Piercing Shot (nächster Schuss)", price: 10, desc: "Nächster Schuss durchdringt Gegner & Wände" },
